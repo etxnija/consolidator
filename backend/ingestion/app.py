@@ -42,6 +42,11 @@ app = FastAPI(
 )
 
 
+@app.get("/health", status_code=status.HTTP_200_OK)
+async def health() -> dict:
+    return {"status": "ok"}
+
+
 @app.post(
     "/ingest/{entity_id}",
     response_model=UploadSummary,
