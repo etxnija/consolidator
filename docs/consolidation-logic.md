@@ -176,13 +176,51 @@ a database. See `engine/tests/test_calculator.py` for comprehensive examples.
 
 ---
 
-## Limitations (Hack Day MVP)
+## Phase 2 Additions
 
-- **Minority interest (NCI)** — partial ownership (< 100%) is not yet handled.
-  The equity elimination uses book value without splitting between controlling and
-  non-controlling interest.
-- **Goodwill** — the investment/equity residual is implicit; no explicit `GOODWILL`
-  account is posted.
+The following elimination steps were added in Phase 2:
+
+### Step 3: Dividend Elimination (IFRS 10.B86(b))
+
+Intercompany dividends are eliminated so that a subsidiary paying a dividend to
+its parent does not inflate group income.
+
+For each parent → child pair:
+- Sum `DIVIDEND_PAID` on the child where `metadata.counterparty_entity_id = parent`
+- Sum `DIVIDEND_REC` on the parent where `metadata.counterparty_entity_id = child`
+- Emit offsetting elimination entries on both sides
+
+### Step 4: Intragroup Revenue / COGS Elimination (IFRS 10.B86(c))
+
+When one group entity sells goods to another, the revenue on the seller and the
+cost on the buyer are both eliminated so that internal sales do not inflate
+consolidated revenue or cost of sales.
+
+For each (seller, buyer) pair:
+- Sum `INTERCO_REV` on the seller where `metadata.counterparty_entity_id = buyer`
+- Sum `INTERCO_COGS` on the buyer where `metadata.counterparty_entity_id = seller`
+- Emit offsetting elimination entries on both sides
+
+### NCI Split in Equity Elimination (IFRS 10.22)
+
+When `ownership_pct < 100`, the subsidiary's equity is split before elimination:
+
+- **Parent's share** = `equity × (ownership_pct / 100)` → eliminated against `INVEST_SUB`
+- **NCI share** = `equity × (1 − ownership_pct / 100)` → posted to `NCI_EQUITY`
+
+`NCI_EQUITY` is **not** eliminated — it remains on the consolidated balance sheet
+as the non-controlling interest's claim on the group's net assets.
+
+---
+
+## Known Limitations
+
+- **Goodwill** — when `invest_amount ≠ equity_amount` the residual is implicit
+  in the trial balance. A future enhancement would explicitly post to a `GOODWILL`
+  account (IFRS 3 / IFRS 10.B86(d)).
 - **Multi-currency** — all amounts are assumed to be in a single reporting currency.
-  No FX translation step is performed.
-- **Dividends** — intercompany dividend payments are not separately eliminated.
+  No IAS 21 FX translation step is performed.
+- **Control assessment** — `ownership_pct` is used as a proxy for control.
+  The full IFRS 10.7 power / returns test is out of scope.
+- **Uniform accounting policies** — no enforcement that all entities use the
+  same accounting policies before consolidation.
