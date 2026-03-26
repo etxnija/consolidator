@@ -15,12 +15,13 @@ Entity resolution:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+import uuid
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import EntityMetadata
+from ..models import EntityMetadata, PeriodStatus, ReportingPeriod
 from ..models import LedgerEntry as OrmLedgerEntry
 
 if TYPE_CHECKING:
@@ -42,9 +43,20 @@ def _resolve_entity_uuid(session: Session, entity_name: str):
     return row.entity_id
 
 
+def _resolve_period(session: Session, period_id: uuid.UUID) -> ReportingPeriod:
+    """Return the period row, or raise LookupError / ValueError."""
+    period = session.get(ReportingPeriod, period_id)
+    if period is None:
+        raise LookupError(f"Reporting period {period_id} not found.")
+    if period.status == PeriodStatus.locked:
+        raise ValueError(f"Reporting period {period.label!r} is locked; ingestion is not allowed.")
+    return period
+
+
 def commit_entries(
     entries: "List[PydanticLedgerEntry]",
     entity_name: str,
+    period_id: Optional[uuid.UUID] = None,
 ) -> int:
     """Insert Pydantic LedgerEntry records into ledger_entries via ORM.
 
@@ -52,12 +64,14 @@ def commit_entries(
         entries: Validated Pydantic LedgerEntry objects from mapping.py.
         entity_name: Human-readable subsidiary name (e.g. "SUBS_01") used
             to resolve the entity UUID from entity_metadata.
+        period_id: Optional UUID of a reporting period to tag entries to.
 
     Returns:
         Number of rows inserted.
 
     Raises:
-        LookupError: If no entity_metadata row exists for entity_name.
+        LookupError: If no entity_metadata row exists for entity_name, or period not found.
+        ValueError: If the period is locked.
     """
     if not entries:
         return 0
@@ -67,6 +81,9 @@ def commit_entries(
     try:
         entity_uuid = _resolve_entity_uuid(session, entity_name)
 
+        if period_id is not None:
+            _resolve_period(session, period_id)
+
         orm_rows = [
             OrmLedgerEntry(
                 entry_id=entry.entry_id,
@@ -75,6 +92,7 @@ def commit_entries(
                 account_code=entry.account_code,
                 amount=entry.amount,
                 is_elimination=entry.is_elimination,
+                period_id=period_id,
                 metadata_=entry.metadata,
             )
             for entry in entries

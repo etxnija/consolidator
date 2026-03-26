@@ -24,6 +24,15 @@ Account-code conventions used by the calculator:
                     metadata must contain: subsidiary_entity_id (str UUID)
     EQUITY_*      — any equity account of the subsidiary
                     (share capital, retained earnings, …)
+    NCI_EQUITY    — non-controlling interest equity (credit balance, not eliminated)
+    DIVIDEND_PAID — dividend paid by subsidiary to parent (debit: reduces equity)
+                    metadata must contain: counterparty_entity_id (str UUID of parent)
+    DIVIDEND_REC  — dividend received by parent from subsidiary (credit: income)
+                    metadata must contain: counterparty_entity_id (str UUID of subsidiary)
+    INTERCO_REV   — intragroup revenue on seller entity (credit balance)
+                    metadata must contain: counterparty_entity_id (str UUID of buyer)
+    INTERCO_COGS  — intragroup cost of goods sold on buyer entity (debit balance)
+                    metadata must contain: counterparty_entity_id (str UUID of seller)
 """
 
 from __future__ import annotations

@@ -250,7 +250,12 @@ class TestEquityElimination:
         assert invest_elims == []
 
     def test_two_subsidiaries_independent_eliminations(self):
-        """Each parent→child pair gets its own equity elimination."""
+        """Each parent→child pair gets its own equity elimination.
+
+        CHILD is 100%-owned: invest_elim + equity_elim = 2 entries.
+        SIBLING is 75%-owned: invest_elim + equity_elim (parent share) + NCI_EQUITY = 3 entries.
+        Total = 5 entries.
+        """
         entries = [
             _entry(PARENT_ID, "INVEST_SUB", Decimal("1000"),
                    metadata={"subsidiary_entity_id": str(CHILD_ID)}),
@@ -260,8 +265,14 @@ class TestEquityElimination:
             _entry(SIBLING_ID, "EQUITY_SHARE_CAP", Decimal("-750")),
         ]
         result = IfrsCalculator.eliminate(entries, THREE_ENTITY, CUT_OFF)
-        # 2 invest eliminations + 2 equity eliminations = 4
-        assert len(result) == 4
+        # 2 (CHILD: invest + equity) + 3 (SIBLING: invest + equity + NCI) = 5
+        assert len(result) == 5
+        # SIBLING should have an NCI_EQUITY entry
+        nci_entries = [e for e in result if e.account_code == "NCI_EQUITY"]
+        assert len(nci_entries) == 1
+        assert nci_entries[0].entity_id == SIBLING_ID
+        # NCI share = -750 * 0.25 = -187.5 → negated → +187.5
+        assert nci_entries[0].amount == Decimal("187.5000")
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +337,130 @@ class TestEliminationMetadata:
                    metadata={"subsidiary_entity_id": str(CHILD_ID)}),
         ]
         result = IfrsCalculator.eliminate(entries, TWO_ENTITY, CUT_OFF)
+
         inv_elim = next(e for e in result if e.entity_id == PARENT_ID)
         assert inv_elim.metadata["subsidiary_entity_id"] == str(CHILD_ID)
         assert inv_elim.metadata["elimination_type"] == "equity_investment"
+
+
+# ---------------------------------------------------------------------------
+# NCI (Non-Controlling Interests)
+# ---------------------------------------------------------------------------
+
+class TestNciElimination:
+
+    def test_partial_ownership_produces_nci_entry(self):
+        """75% ownership → NCI_EQUITY entry for the 25% minority share."""
+        entries = [
+            _entry(PARENT_ID, "INVEST_SUB", Decimal("750"),
+                   metadata={"subsidiary_entity_id": str(SIBLING_ID)}),
+            _entry(SIBLING_ID, "EQUITY_SHARE_CAP", Decimal("-1000")),
+        ]
+        result = IfrsCalculator.eliminate(entries, THREE_ENTITY, CUT_OFF)
+        nci_entries = [e for e in result if e.account_code == "NCI_EQUITY"]
+        assert len(nci_entries) == 1
+        assert nci_entries[0].entity_id == SIBLING_ID
+        # NCI share = -1000 * 0.25 = -250 → negated → +250
+        assert nci_entries[0].amount == Decimal("250.0000")
+
+    def test_full_ownership_no_nci_entry(self):
+        """100% ownership → no NCI_EQUITY entry."""
+        entries = [
+            _entry(PARENT_ID, "INVEST_SUB", Decimal("1000"),
+                   metadata={"subsidiary_entity_id": str(CHILD_ID)}),
+            _entry(CHILD_ID, "EQUITY_SHARE_CAP", Decimal("-1000")),
+        ]
+        result = IfrsCalculator.eliminate(entries, TWO_ENTITY, CUT_OFF)
+        nci_entries = [e for e in result if e.account_code == "NCI_EQUITY"]
+        assert nci_entries == []
+
+    def test_nci_metadata_records_nci_pct(self):
+        entries = [
+            _entry(PARENT_ID, "INVEST_SUB", Decimal("750"),
+                   metadata={"subsidiary_entity_id": str(SIBLING_ID)}),
+            _entry(SIBLING_ID, "EQUITY_SHARE_CAP", Decimal("-1000")),
+        ]
+        result = IfrsCalculator.eliminate(entries, THREE_ENTITY, CUT_OFF)
+        nci = next(e for e in result if e.account_code == "NCI_EQUITY")
+        assert nci.metadata["elimination_type"] == "nci_equity"
+        assert nci.metadata["nci_pct"] == "25"
+
+
+# ---------------------------------------------------------------------------
+# Dividend elimination
+# ---------------------------------------------------------------------------
+
+class TestDividendElimination:
+
+    def test_matched_dividend_pair_eliminated(self):
+        """DIVIDEND_PAID on child and DIVIDEND_REC on parent are both negated."""
+        entries = [
+            _entry(CHILD_ID, "DIVIDEND_PAID", Decimal("200"),
+                   metadata={"counterparty_entity_id": str(PARENT_ID)}),
+            _entry(PARENT_ID, "DIVIDEND_REC", Decimal("-200"),
+                   metadata={"counterparty_entity_id": str(CHILD_ID)}),
+        ]
+        result = IfrsCalculator.eliminate(entries, TWO_ENTITY, CUT_OFF)
+        paid_elim = next((e for e in result if e.account_code == "DIVIDEND_PAID"), None)
+        rec_elim = next((e for e in result if e.account_code == "DIVIDEND_REC"), None)
+        assert paid_elim is not None
+        assert rec_elim is not None
+        assert paid_elim.amount == Decimal("-200")
+        assert rec_elim.amount == Decimal("200")
+        assert paid_elim.metadata["elimination_type"] == "dividend_paid"
+        assert rec_elim.metadata["elimination_type"] == "dividend_received"
+
+    def test_dividend_only_on_one_side(self):
+        """If only DIVIDEND_PAID exists (no matching REC), only that side is eliminated."""
+        entries = [
+            _entry(CHILD_ID, "DIVIDEND_PAID", Decimal("100"),
+                   metadata={"counterparty_entity_id": str(PARENT_ID)}),
+        ]
+        result = IfrsCalculator.eliminate(entries, TWO_ENTITY, CUT_OFF)
+        paid_elims = [e for e in result if e.account_code == "DIVIDEND_PAID"]
+        assert len(paid_elims) == 1
+
+    def test_external_counterparty_dividend_ignored(self):
+        external = uuid.uuid4()
+        entries = [
+            _entry(CHILD_ID, "DIVIDEND_PAID", Decimal("500"),
+                   metadata={"counterparty_entity_id": str(external)}),
+        ]
+        result = IfrsCalculator.eliminate(entries, TWO_ENTITY, CUT_OFF)
+        div_elims = [e for e in result if e.account_code == "DIVIDEND_PAID"]
+        assert div_elims == []
+
+
+# ---------------------------------------------------------------------------
+# Intragroup revenue / COGS elimination
+# ---------------------------------------------------------------------------
+
+class TestIntercoRevenueElimination:
+
+    def test_matched_rev_cogs_eliminated(self):
+        """INTERCO_REV on seller and INTERCO_COGS on buyer are both negated."""
+        entries = [
+            _entry(CHILD_ID, "INTERCO_REV", Decimal("-500"),
+                   metadata={"counterparty_entity_id": str(SIBLING_ID)}),
+            _entry(SIBLING_ID, "INTERCO_COGS", Decimal("500"),
+                   metadata={"counterparty_entity_id": str(CHILD_ID)}),
+        ]
+        result = IfrsCalculator.eliminate(entries, THREE_ENTITY, CUT_OFF)
+        rev_elim = next((e for e in result if e.account_code == "INTERCO_REV"), None)
+        cogs_elim = next((e for e in result if e.account_code == "INTERCO_COGS"), None)
+        assert rev_elim is not None
+        assert cogs_elim is not None
+        assert rev_elim.amount == Decimal("500")   # negate credit balance
+        assert cogs_elim.amount == Decimal("-500")  # negate debit balance
+        assert rev_elim.metadata["elimination_type"] == "interco_revenue"
+        assert cogs_elim.metadata["elimination_type"] == "interco_cogs"
+
+    def test_external_counterparty_rev_ignored(self):
+        external = uuid.uuid4()
+        entries = [
+            _entry(CHILD_ID, "INTERCO_REV", Decimal("-300"),
+                   metadata={"counterparty_entity_id": str(external)}),
+        ]
+        result = IfrsCalculator.eliminate(entries, THREE_ENTITY, CUT_OFF)
+        rev_elims = [e for e in result if e.account_code == "INTERCO_REV"]
+        assert rev_elims == []

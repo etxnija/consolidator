@@ -43,6 +43,11 @@ _INTERCO_REC_PREFIX = "INTERCO_REC"
 _INTERCO_PAY_PREFIX = "INTERCO_PAY"
 _INVEST_SUB_PREFIX = "INVEST_SUB"
 _EQUITY_PREFIX = "EQUITY_"
+_NCI_EQUITY_CODE = "NCI_EQUITY"
+_DIVIDEND_PAID_PREFIX = "DIVIDEND_PAID"
+_DIVIDEND_REC_PREFIX = "DIVIDEND_REC"
+_INTERCO_REV_PREFIX = "INTERCO_REV"
+_INTERCO_COGS_PREFIX = "INTERCO_COGS"
 
 
 def _is_interco_rec(entry: LedgerEntrySnapshot) -> bool:
@@ -59,6 +64,22 @@ def _is_invest_sub(entry: LedgerEntrySnapshot) -> bool:
 
 def _is_equity(entry: LedgerEntrySnapshot) -> bool:
     return entry.account_code.startswith(_EQUITY_PREFIX)
+
+
+def _is_dividend_paid(entry: LedgerEntrySnapshot) -> bool:
+    return entry.account_code.startswith(_DIVIDEND_PAID_PREFIX)
+
+
+def _is_dividend_rec(entry: LedgerEntrySnapshot) -> bool:
+    return entry.account_code.startswith(_DIVIDEND_REC_PREFIX)
+
+
+def _is_interco_rev(entry: LedgerEntrySnapshot) -> bool:
+    return entry.account_code.startswith(_INTERCO_REV_PREFIX)
+
+
+def _is_interco_cogs(entry: LedgerEntrySnapshot) -> bool:
+    return entry.account_code.startswith(_INTERCO_COGS_PREFIX)
 
 
 def _counterparty(entry: LedgerEntrySnapshot) -> Optional[uuid.UUID]:
@@ -150,8 +171,10 @@ class IfrsCalculator:
 
         step1 = cls._eliminate_intercompany(eligible, entity_ids, as_of)
         step2 = cls._eliminate_equity(eligible, entities, entity_ids, as_of)
+        step3 = cls._eliminate_dividends(eligible, entities, entity_ids, as_of)
+        step4 = cls._eliminate_interco_revenue(eligible, entity_ids, as_of)
 
-        return step1 + step2
+        return step1 + step2 + step3 + step4
 
     # ------------------------------------------------------------------
     # Step 1: Intercompany elimination
@@ -278,15 +301,20 @@ class IfrsCalculator:
           1. Sum all INVEST_SUB entries on the parent where
              metadata.subsidiary_entity_id == child's entity_id.
           2. Sum all EQUITY_* entries on the child.
-          3. Create two elimination entries:
-             a. On the parent: negate the investment balance (credit asset).
-             b. On the child:  negate the equity balance  (debit equity).
+          3. Split equity into parent share and NCI share based on ownership_pct.
+          4. Eliminate parent's share and investment; post NCI share to NCI_EQUITY.
 
         If the investment and equity totals differ, both sides are still
         eliminated at their respective book values, leaving an implicit
         goodwill or bargain-purchase residual visible in the trial balance.
         """
         eliminations: List[EliminationEntry] = []
+
+        # Build ownership_pct lookup: entity_id -> ownership_pct (0-100)
+        ownership: Dict[uuid.UUID, Decimal] = {
+            e.entity_id: (e.ownership_pct if e.ownership_pct is not None else Decimal("100"))
+            for e in entities
+        }
 
         # Pre-compute per-entity investment and equity totals
         # invest_totals[parent_id][subsidiary_id] = total investment amount
@@ -307,6 +335,10 @@ class IfrsCalculator:
         for parent_id, child_id in _parent_child_pairs(entities):
             invest_amount = invest_totals[parent_id].get(child_id, Decimal("0"))
             equity_amount = equity_totals.get(child_id, Decimal("0"))
+            pct = ownership.get(child_id, Decimal("100"))
+
+            parent_share = (equity_amount * pct / Decimal("100")).quantize(Decimal("0.0001"))
+            nci_share = equity_amount - parent_share
 
             # Eliminate parent's investment (credit: negate debit balance)
             if invest_amount != Decimal("0"):
@@ -325,19 +357,213 @@ class IfrsCalculator:
                     )
                 )
 
-            # Eliminate subsidiary's equity (debit: negate credit balance)
-            if equity_amount != Decimal("0"):
+            # Eliminate parent's share of subsidiary equity
+            if parent_share != Decimal("0"):
                 eliminations.append(
                     EliminationEntry(
                         entry_id=uuid.uuid4(),
                         timestamp=as_of,
                         entity_id=child_id,
                         account_code=_EQUITY_PREFIX.rstrip("_"),
-                        amount=-equity_amount,
+                        amount=-parent_share,
                         is_elimination=True,
                         metadata={
                             "elimination_type": "equity_subsidiary",
                             "parent_entity_id": str(parent_id),
+                            "ownership_pct": str(pct),
+                        },
+                    )
+                )
+
+            # Post NCI share to NCI_EQUITY (not eliminated — stays on BS)
+            if nci_share != Decimal("0"):
+                eliminations.append(
+                    EliminationEntry(
+                        entry_id=uuid.uuid4(),
+                        timestamp=as_of,
+                        entity_id=child_id,
+                        account_code=_NCI_EQUITY_CODE,
+                        amount=-nci_share,
+                        is_elimination=True,
+                        metadata={
+                            "elimination_type": "nci_equity",
+                            "parent_entity_id": str(parent_id),
+                            "nci_pct": str(Decimal("100") - pct),
+                        },
+                    )
+                )
+
+        return eliminations
+
+    # ------------------------------------------------------------------
+    # Step 3: Dividend elimination
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _eliminate_dividends(
+        cls,
+        entries: List[LedgerEntrySnapshot],
+        entities: List[EntityNode],
+        entity_ids: Set[uuid.UUID],
+        as_of: datetime,
+    ) -> List[EliminationEntry]:
+        """Eliminate intragroup dividends (IFRS 10.B86(b)).
+
+        For each parent→child pair, sum:
+          - DIVIDEND_PAID on child (debit reduces equity, counterparty = parent)
+          - DIVIDEND_REC on parent (credit income, counterparty = child)
+
+        Both sides are negated to eliminate the intercompany dividend flow.
+        """
+        eliminations: List[EliminationEntry] = []
+
+        # div_paid_totals[child_id][parent_id] = total paid
+        div_paid: Dict[uuid.UUID, Dict[uuid.UUID, Decimal]] = defaultdict(
+            lambda: defaultdict(Decimal)
+        )
+        # div_rec_totals[parent_id][child_id] = total received
+        div_rec: Dict[uuid.UUID, Dict[uuid.UUID, Decimal]] = defaultdict(
+            lambda: defaultdict(Decimal)
+        )
+
+        for entry in entries:
+            cp = _counterparty(entry)
+            if cp is None or cp not in entity_ids:
+                continue
+            if _is_dividend_paid(entry):
+                div_paid[entry.entity_id][cp] += entry.amount
+            elif _is_dividend_rec(entry):
+                div_rec[entry.entity_id][cp] += entry.amount
+
+        for parent_id, child_id in _parent_child_pairs(entities):
+            paid_amount = div_paid[child_id].get(parent_id, Decimal("0"))
+            rec_amount = div_rec[parent_id].get(child_id, Decimal("0"))
+
+            if paid_amount != Decimal("0"):
+                eliminations.append(
+                    EliminationEntry(
+                        entry_id=uuid.uuid4(),
+                        timestamp=as_of,
+                        entity_id=child_id,
+                        account_code=_DIVIDEND_PAID_PREFIX,
+                        amount=-paid_amount,
+                        is_elimination=True,
+                        metadata={
+                            "elimination_type": "dividend_paid",
+                            "counterparty_entity_id": str(parent_id),
+                        },
+                    )
+                )
+
+            if rec_amount != Decimal("0"):
+                eliminations.append(
+                    EliminationEntry(
+                        entry_id=uuid.uuid4(),
+                        timestamp=as_of,
+                        entity_id=parent_id,
+                        account_code=_DIVIDEND_REC_PREFIX,
+                        amount=-rec_amount,
+                        is_elimination=True,
+                        metadata={
+                            "elimination_type": "dividend_received",
+                            "counterparty_entity_id": str(child_id),
+                        },
+                    )
+                )
+
+        return eliminations
+
+    # ------------------------------------------------------------------
+    # Step 4: Intragroup revenue / COGS elimination
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _eliminate_interco_revenue(
+        cls,
+        entries: List[LedgerEntrySnapshot],
+        entity_ids: Set[uuid.UUID],
+        as_of: datetime,
+    ) -> List[EliminationEntry]:
+        """Eliminate intragroup revenue/COGS pairs (IFRS 10.B86(c)).
+
+        For each (seller, buyer) pair:
+          - Negate INTERCO_REV on seller
+          - Negate INTERCO_COGS on buyer
+        """
+        eliminations: List[EliminationEntry] = []
+
+        # rev_totals[(seller_id, buyer_id)] = total revenue
+        rev_totals: Dict[Tuple[uuid.UUID, uuid.UUID], Decimal] = defaultdict(Decimal)
+        # cogs_totals[(buyer_id, seller_id)] = total COGS
+        cogs_totals: Dict[Tuple[uuid.UUID, uuid.UUID], Decimal] = defaultdict(Decimal)
+
+        for entry in entries:
+            cp = _counterparty(entry)
+            if cp is None or cp not in entity_ids:
+                continue
+            if _is_interco_rev(entry):
+                rev_totals[(entry.entity_id, cp)] += entry.amount
+            elif _is_interco_cogs(entry):
+                cogs_totals[(entry.entity_id, cp)] += entry.amount
+
+        seen_pairs: Set[Tuple[uuid.UUID, uuid.UUID]] = set()
+
+        for (seller, buyer), rev_amount in rev_totals.items():
+            if (buyer, seller) in seen_pairs:
+                continue
+            seen_pairs.add((seller, buyer))
+
+            if rev_amount != Decimal("0"):
+                eliminations.append(
+                    EliminationEntry(
+                        entry_id=uuid.uuid4(),
+                        timestamp=as_of,
+                        entity_id=seller,
+                        account_code=_INTERCO_REV_PREFIX,
+                        amount=-rev_amount,
+                        is_elimination=True,
+                        metadata={
+                            "elimination_type": "interco_revenue",
+                            "counterparty_entity_id": str(buyer),
+                        },
+                    )
+                )
+
+            cogs_amount = cogs_totals.get((buyer, seller), Decimal("0"))
+            if cogs_amount != Decimal("0"):
+                eliminations.append(
+                    EliminationEntry(
+                        entry_id=uuid.uuid4(),
+                        timestamp=as_of,
+                        entity_id=buyer,
+                        account_code=_INTERCO_COGS_PREFIX,
+                        amount=-cogs_amount,
+                        is_elimination=True,
+                        metadata={
+                            "elimination_type": "interco_cogs",
+                            "counterparty_entity_id": str(seller),
+                        },
+                    )
+                )
+
+        # Handle COGS-only entries
+        for (buyer, seller), cogs_amount in cogs_totals.items():
+            pair = (seller, buyer)
+            if pair in seen_pairs or (buyer, seller) in seen_pairs:
+                continue
+            seen_pairs.add((buyer, seller))
+            if cogs_amount != Decimal("0"):
+                eliminations.append(
+                    EliminationEntry(
+                        entry_id=uuid.uuid4(),
+                        timestamp=as_of,
+                        entity_id=buyer,
+                        account_code=_INTERCO_COGS_PREFIX,
+                        amount=-cogs_amount,
+                        is_elimination=True,
+                        metadata={
+                            "elimination_type": "interco_cogs",
+                            "counterparty_entity_id": str(seller),
                         },
                     )
                 )

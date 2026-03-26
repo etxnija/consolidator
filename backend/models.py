@@ -10,6 +10,7 @@ Immutability is enforced at two layers:
 """
 
 import datetime
+import enum
 import uuid
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -17,6 +18,8 @@ from typing import Dict, List, Optional
 from sqlalchemy import (
     Boolean,
     DDL,
+    Date,
+    Enum,
     ForeignKey,
     Numeric,
     String,
@@ -29,6 +32,65 @@ from sqlalchemy.sql import func
 from sqlalchemy.types import TIMESTAMP
 
 from .database import Base
+
+
+# ---------------------------------------------------------------------------
+# reporting_periods
+# ---------------------------------------------------------------------------
+
+class PeriodStatus(str, enum.Enum):
+    open = "open"
+    locked = "locked"
+
+
+class ReportingPeriod(Base):
+    """A named reporting period used to group ledger entries for consolidation.
+
+    Examples: "FY-2024", "Q4-2024".  The period_end date is used as the
+    `as_of` cutoff when running the IFRS 10 calculator.
+    """
+
+    __tablename__ = "reporting_periods"
+
+    period_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        comment="Stable identifier for the reporting period",
+    )
+    label: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        unique=True,
+        comment="Human-readable label, e.g. 'FY-2024', 'Q4-2024'",
+    )
+    period_start: Mapped[datetime.date] = mapped_column(
+        Date,
+        nullable=False,
+        comment="First day of the reporting period",
+    )
+    period_end: Mapped[datetime.date] = mapped_column(
+        Date,
+        nullable=False,
+        comment="Last day of the reporting period (used as as_of cutoff)",
+    )
+    status: Mapped[PeriodStatus] = mapped_column(
+        Enum(PeriodStatus, name="period_status"),
+        nullable=False,
+        default=PeriodStatus.open,
+        server_default=text("'open'"),
+        comment="'open' allows ingestion; 'locked' prevents further changes",
+    )
+
+    # Ledger entries tagged to this period
+    ledger_entries: Mapped[List["LedgerEntry"]] = relationship(
+        "LedgerEntry",
+        back_populates="period",
+        cascade="",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReportingPeriod period_id={self.period_id} label={self.label!r} status={self.status}>"
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +208,13 @@ class LedgerEntry(Base):
         server_default=text("FALSE"),
         comment="True for intercompany elimination entries",
     )
+    period_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("reporting_periods.period_id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+        comment="Reporting period this entry belongs to (nullable for legacy entries)",
+    )
     metadata_: Mapped[Optional[Dict]] = mapped_column(
         "metadata",
         JSONB,
@@ -156,6 +225,12 @@ class LedgerEntry(Base):
     # Relationship back to the entity
     entity: Mapped["EntityMetadata"] = relationship(  # type: ignore[assignment]
         "EntityMetadata",
+        back_populates="ledger_entries",
+    )
+
+    # Relationship to the reporting period
+    period: Mapped[Optional["ReportingPeriod"]] = relationship(
+        "ReportingPeriod",
         back_populates="ledger_entries",
     )
 

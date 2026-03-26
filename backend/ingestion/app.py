@@ -4,42 +4,40 @@ Endpoints:
   POST /ingest/{entity_id}  — Upload a subsidiary Trial Balance CSV.
 
 The endpoint:
-  1. Validates entity_id is a known subsidiary.
+  1. Validates entity_id resolves to a known entity in entity_metadata.
   2. Parses the CSV with Pandas.
   3. Maps each account code to GCoA via mapping.py.
   4. Persists mapped entries to ledger_entries via database.py.
   5. Returns an UploadSummary (mapped/unmapped counts).
+
+Optional query parameter:
+  period_id — UUID of a reporting period; if provided entries are tagged to that period.
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, status
+from fastapi import FastAPI, HTTPException, Query, UploadFile, status
 
+from ..consolidation.router import router as consolidation_router
+from ..entities.router import router as entities_router
+from ..periods.router import router as periods_router
 from .database import commit_entries
 from .mapping import map_trial_balance, parse_csv, split_records
 from .models import UploadSummary
 
-# The 10 supported subsidiaries.
-KNOWN_SUBSIDIARIES = {
-    "SUBS_01",
-    "SUBS_02",
-    "SUBS_03",
-    "SUBS_04",
-    "SUBS_05",
-    "SUBS_06",
-    "SUBS_07",
-    "SUBS_08",
-    "SUBS_09",
-    "SUBS_10",
-}
-
 app = FastAPI(
     title="Consolidator Ingestion Service",
     description="Accepts subsidiary Trial Balance CSVs and maps them to GCoA.",
-    version="0.1.0",
+    version="0.2.0",
 )
+
+app.include_router(entities_router)
+app.include_router(periods_router)
+app.include_router(consolidation_router)
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)
@@ -56,21 +54,20 @@ async def health() -> dict:
 async def ingest_trial_balance(
     entity_id: str,
     file: UploadFile,
+    period_id: Optional[uuid.UUID] = Query(
+        None,
+        description="Tag these entries to a specific reporting period",
+    ),
 ) -> UploadSummary:
     """Accept a CSV Trial Balance for *entity_id* and commit mapped entries.
 
     The CSV must have at minimum the columns `account_code` and `amount`.
     An optional `description` column is also recognised.
 
+    Pass `period_id` to associate entries with a reporting period.
+
     Returns an UploadSummary with mapped/unmapped counts.
     """
-    if entity_id not in KNOWN_SUBSIDIARIES:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unknown subsidiary: {entity_id!r}. "
-                   f"Valid values: {sorted(KNOWN_SUBSIDIARIES)}",
-        )
-
     content = await file.read()
     if not content:
         raise HTTPException(
@@ -97,7 +94,7 @@ async def ingest_trial_balance(
     entries, unmapped_codes = split_records(records)
 
     try:
-        committed = commit_entries(entries, entity_name=entity_id)
+        committed = commit_entries(entries, entity_name=entity_id, period_id=period_id)
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
