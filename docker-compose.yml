@@ -59,6 +59,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-consolidator}:${POSTGRES_PASSWORD:-consolidator}@postgres:5432/${POSTGRES_DB:-consolidator}
       BACKEND_URL: http://backend:8000
+    ports:
+      - "${ENGINE_PORT:-8001}:8001"
     volumes:
       - ./engine:/app:z
     depends_on:
@@ -67,7 +69,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import sys; sys.exit(0)\""]
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
