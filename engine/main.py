@@ -6,8 +6,8 @@ from typing import List
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from calculator import IfrsCalculator
-from models import EliminationEntry, EntityNode, LedgerEntrySnapshot
+from .calculator import IfrsCalculator
+from .models import EliminationEntry, EntityNode, LedgerEntrySnapshot
 
 app = FastAPI(
     title="Consolidator Engine",
