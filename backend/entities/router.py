@@ -146,3 +146,18 @@ def update_entity(
     db.commit()
     db.refresh(entity)
     return EntityResponse.model_validate(entity)
+
+
+@router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_entity(entity_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+    """Delete an entity. Blocked if the entity has ledger entries."""
+    entity = db.get(EntityMetadata, entity_id)
+    if entity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+    if entity.ledger_entries:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Entity {entity.name!r} has {len(entity.ledger_entries)} ledger entries and cannot be deleted.",
+        )
+    db.delete(entity)
+    db.commit()
