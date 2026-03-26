@@ -169,23 +169,27 @@ st.sidebar.divider()
 
 st.sidebar.header("Ingest Trial Balance")
 
-entity_options = {e["name"]: e["entity_id"] for e in load_entities()}
+entity_names = [e["name"] for e in load_entities()]
 
-if entity_options:
-    ingest_entity_label = st.sidebar.selectbox("Subsidiary", list(entity_options.keys()), key="ingest_entity")
-    ingest_entity_id = entity_options[ingest_entity_label]
+if entity_names:
+    ingest_entity_name = st.sidebar.selectbox("Subsidiary", entity_names, key="ingest_entity")
 else:
     st.sidebar.info("Create entities first.")
-    ingest_entity_id = None
+    ingest_entity_name = None
 
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-if st.sidebar.button("Upload") and uploaded_file and ingest_entity_id:
-    with st.spinner(f"Ingesting {ingest_entity_label}..."):
+if st.sidebar.button("Upload") and uploaded_file and ingest_entity_name:
+    active_period = st.session_state.get("active_period")
+    params = {}
+    if active_period:
+        params["period_id"] = active_period["period_id"]
+    with st.spinner(f"Ingesting {ingest_entity_name}..."):
         try:
             resp = requests.post(
-                f"{BACKEND_URL}/ingest/{ingest_entity_id}",
+                f"{BACKEND_URL}/ingest/{ingest_entity_name}",
                 files={"file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")},
+                params=params,
                 timeout=30,
             )
             resp.raise_for_status()
