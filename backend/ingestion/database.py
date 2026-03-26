@@ -30,17 +30,23 @@ if TYPE_CHECKING:
 
 def _resolve_entity_uuid(session: Session, entity_name: str):
     """Return the UUID for an entity by its name, or raise LookupError."""
-    row = (
+    rows = (
         session.query(EntityMetadata)
         .filter(EntityMetadata.name == entity_name)
-        .one_or_none()
+        .all()
     )
-    if row is None:
+    if not rows:
         raise LookupError(
             f"Entity {entity_name!r} not found in entity_metadata. "
             "Ensure the entity has been registered before ingestion."
         )
-    return row.entity_id
+    if len(rows) > 1:
+        raise LookupError(
+            f"Multiple entities named {entity_name!r} exist "
+            f"({len(rows)} rows). Delete duplicates via DELETE /entities/{{id}} "
+            "or use the entity UUID directly."
+        )
+    return rows[0].entity_id
 
 
 def _resolve_period(session: Session, period_id: uuid.UUID) -> ReportingPeriod:
