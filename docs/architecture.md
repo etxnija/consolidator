@@ -377,6 +377,7 @@ demo/
 | Document | Contents |
 |----------|----------|
 | [consolidation-logic.md](consolidation-logic.md) | Detailed IFRS 10 elimination rules, worked examples, account conventions |
+| [qa-strategy.md](qa-strategy.md) | QA layers — unit tests, independent cross-validator, API regression tests |
 | [roadmap.md](roadmap.md) | Investor demo roadmap, current state assessment, prioritised backlog |
 | [demo.md](demo.md) | Step-by-step demo walkthrough (curl + Swagger UI) |
 | **architecture.md** _(this file)_ | System design, data model, flows, validation |
