@@ -33,7 +33,7 @@ from .models import LedgerEntry, MappingRecord, TrialBalanceRow
 
 # Columns we recognise in an uploaded CSV.
 _REQUIRED_COLUMNS = {"account_code", "amount"}
-_OPTIONAL_COLUMNS = {"description"}
+_OPTIONAL_COLUMNS = {"description", "counterparty_entity_id", "subsidiary_entity_id"}
 _ALL_COLUMNS = _REQUIRED_COLUMNS | _OPTIONAL_COLUMNS
 
 
@@ -71,10 +71,16 @@ def parse_csv(content: bytes | str) -> pd.DataFrame:
 def _parse_row(row: pd.Series) -> Optional[TrialBalanceRow]:
     """Coerce a DataFrame row into a TrialBalanceRow; return None if invalid."""
     try:
+        def _opt_str(key: str) -> Optional[str]:
+            val = str(row.get(key, "")).strip()
+            return val if val else None
+
         return TrialBalanceRow(
             account_code=str(row["account_code"]).strip(),
             amount=Decimal(str(row["amount"]).strip()),
             description=str(row.get("description", "")).strip(),
+            counterparty_entity_id=_opt_str("counterparty_entity_id"),
+            subsidiary_entity_id=_opt_str("subsidiary_entity_id"),
         )
     except (ValidationError, InvalidOperation):
         return None
@@ -117,6 +123,12 @@ def map_trial_balance(
             records.append(MappingRecord(row=tb_row, gcoa_code=None, entry=None))
             continue
 
+        extra: dict[str, Any] = {}
+        if tb_row.counterparty_entity_id:
+            extra["counterparty_entity_id"] = tb_row.counterparty_entity_id
+        if tb_row.subsidiary_entity_id:
+            extra["subsidiary_entity_id"] = tb_row.subsidiary_entity_id
+
         entry = LedgerEntry(
             timestamp=ts,
             entity_id=entity_id,
@@ -127,6 +139,7 @@ def map_trial_balance(
                 **base_meta,
                 "local_account_code": tb_row.account_code,
                 "description": tb_row.description,
+                **extra,
             },
         )
         records.append(MappingRecord(row=tb_row, gcoa_code=gcoa_code, entry=entry))

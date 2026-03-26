@@ -236,6 +236,53 @@ _register("SUBS_10", {
 })
 
 
+# ---------------------------------------------------------------------------
+# Demo entities — ParentCo / SubA / SubB (3-entity consolidation group)
+# ---------------------------------------------------------------------------
+
+_register("ParentCo", {
+    "CASH":            "1100",
+    "PPE":             "1500",
+    "INVEST_SUB_A":    "INVEST_SUB",
+    "INVEST_SUB_B":    "INVEST_SUB",
+    "INTERCO_REC_A":   "INTERCO_REC",
+    "DIVIDEND_REC_B":  "DIVIDEND_REC",
+    "AP":              "2100",
+    "LTD":             "2500",
+    "EQUITY_SHARE_CAP": "EQUITY_SHARE_CAP",
+    "RETAINED":        "3200",
+})
+
+_register("SubA", {
+    "CASH":            "1100",
+    "AR":              "1200",
+    "INV":             "1300",
+    "PPE":             "1500",
+    "INTERCO_PAY_P":   "INTERCO_PAY",
+    "AP":              "2100",
+    "EQUITY_SHARE_CAP": "EQUITY_SHARE_CAP",
+    "RETAINED":        "3200",
+    "REV":             "4100",
+    "INTERCO_REV_B":   "INTERCO_REV",
+    "COGS":            "5100",
+})
+
+_register("SubB", {
+    "CASH":            "1100",
+    "AR":              "1200",
+    "INV":             "1300",
+    "PPE":             "1500",
+    "AP":              "2100",
+    "LTD":             "2500",
+    "EQUITY_SHARE_CAP": "EQUITY_SHARE_CAP",
+    "RETAINED":        "3200",
+    "DIVIDEND_PAID_P": "DIVIDEND_PAID",
+    "REV":             "4100",
+    "INTERCO_COGS_A":  "INTERCO_COGS",
+    "COGS":            "5100",
+})
+
+
 def lookup(entity_id: str, local_code: str) -> Optional[str]:
     """Return the GCoA account code for a given subsidiary + local code, or None."""
     return GCOA_MAPPING.get((entity_id, local_code.strip()))

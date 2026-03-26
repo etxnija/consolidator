@@ -64,7 +64,9 @@ EMPTY_CSV = "account_code,amount,description\n"
 class TestParseCsv:
     def test_valid_csv_bytes(self) -> None:
         df = parse_csv(VALID_CSV.encode())
-        assert list(df.columns) == ["account_code", "amount", "description"]
+        assert "account_code" in df.columns
+        assert "amount" in df.columns
+        assert "description" in df.columns
         assert len(df) == 2
 
     def test_valid_csv_str(self) -> None:

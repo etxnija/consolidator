@@ -1,0 +1,12 @@
+account_code,amount,description,counterparty_entity_id,subsidiary_entity_id
+CASH,200000.00,Cash,,
+AR,100000.00,Trade receivables,,
+INV,50000.00,Inventories,,
+PPE,300000.00,Property plant & equipment,,
+INTERCO_PAY_P,-80000.00,Interco payable to ParentCo,PARENT_UUID,
+AP,-50000.00,Trade payables,,
+EQUITY_SHARE_CAP,-400000.00,Share capital,,
+RETAINED,-220000.00,Retained earnings,,
+REV,-300000.00,External revenue,,
+INTERCO_REV_B,-100000.00,Interco revenue from SubB,SUB_B_UUID,
+COGS,500000.00,Cost of sales,,

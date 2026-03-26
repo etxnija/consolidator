@@ -1,0 +1,13 @@
+account_code,amount,description,counterparty_entity_id,subsidiary_entity_id
+CASH,100000.00,Cash,,
+AR,60000.00,Trade receivables,,
+INV,40000.00,Inventories,,
+PPE,200000.00,Property plant & equipment,,
+AP,-30000.00,Trade payables,,
+LTD,-100000.00,Long-term debt,,
+EQUITY_SHARE_CAP,-200000.00,Share capital,,
+RETAINED,-107500.00,Retained earnings,,
+DIVIDEND_PAID_P,37500.00,Dividend paid to ParentCo,PARENT_UUID,
+REV,-150000.00,External revenue,,
+INTERCO_COGS_A,100000.00,Interco COGS from SubA,SUB_A_UUID,
+COGS,50000.00,External COGS,,

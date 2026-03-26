@@ -1,0 +1,11 @@
+account_code,amount,description,counterparty_entity_id,subsidiary_entity_id
+CASH,500000.00,Cash & equivalents,,
+PPE,800000.00,Property plant & equipment,,
+INVEST_SUB_A,600000.00,Investment in SubA (100%),,SUB_A_UUID
+INVEST_SUB_B,225000.00,Investment in SubB (75%),,SUB_B_UUID
+INTERCO_REC_A,80000.00,Interco receivable from SubA,SUB_A_UUID,
+DIVIDEND_REC_B,37500.00,Dividend received from SubB,SUB_B_UUID,
+AP,-200000.00,Trade payables,,
+LTD,-500000.00,Long-term debt,,
+EQUITY_SHARE_CAP,-1000000.00,Share capital,,
+RETAINED,-542500.00,Retained earnings,,

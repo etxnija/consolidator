@@ -32,6 +32,8 @@ class TrialBalanceRow(BaseModel):
     account_code: str
     amount: Decimal
     description: str = ""
+    counterparty_entity_id: Optional[str] = None
+    subsidiary_entity_id: Optional[str] = None
 
     @field_validator("amount", mode="before")
     @classmethod
