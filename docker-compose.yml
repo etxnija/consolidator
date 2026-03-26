@@ -33,6 +33,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-consolidator}:${POSTGRES_PASSWORD:-consolidator}@postgres:5432/${POSTGRES_DB:-consolidator}
+      ENGINE_URL: http://engine:8001
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
