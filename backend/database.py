@@ -30,7 +30,7 @@ def get_db():
 def _block_unsafe_ddl(conn, cursor, statement, parameters, context, executemany):
     """Raise if a DDL UPDATE or DELETE targets ledger tables."""
     upper = statement.strip().upper()
-    ledger_tables = {"LEDGER_ENTRIES", "ENTITY_METADATA"}
+    ledger_tables = {"LEDGER_ENTRIES"}
     if upper.startswith(("UPDATE", "DELETE")):
         for table in ledger_tables:
             if table in upper:
