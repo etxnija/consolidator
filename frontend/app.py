@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -42,6 +43,20 @@ def api_post(path: str, payload: dict) -> Optional[Any]:
         return None
 
 
+def api_post_empty(path: str) -> Optional[Any]:
+    """POST with no request body (e.g. action endpoints)."""
+    try:
+        resp = requests.post(f"{BACKEND_URL}{path}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.HTTPError as exc:
+        st.error(f"Error: {exc.response.text}")
+        return None
+    except Exception as exc:
+        st.error(str(exc))
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Data loaders (cached per rerun)
 # ---------------------------------------------------------------------------
@@ -59,6 +74,11 @@ def load_entity_tree() -> List[dict]:
 @st.cache_data(ttl=5)
 def load_periods() -> List[dict]:
     return api_get("/periods") or []
+
+
+@st.cache_data(ttl=5)
+def load_report(period_id: str) -> Optional[dict]:
+    return api_get(f"/report/{period_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -264,3 +284,151 @@ if active:
     st.caption(f"Status: {active['status']}  ·  ID: {active['period_id']}")
 else:
     st.info("No reporting period selected. Create and select a period using the sidebar.")
+
+st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Main: Consolidation Controls
+# ---------------------------------------------------------------------------
+
+st.subheader("Consolidation")
+
+active = st.session_state.get("active_period")
+if not active:
+    st.info("Select a reporting period to run consolidation.")
+else:
+    period_id = active["period_id"]
+    is_locked = active["status"] == "locked"
+
+    col_run, col_lock = st.columns(2)
+
+    with col_run:
+        if st.button(
+            "▶ Consolidate",
+            disabled=is_locked,
+            help="Run IFRS 10 consolidation and generate eliminations",
+            use_container_width=True,
+        ):
+            with st.spinner("Running consolidation…"):
+                result = api_post_empty(f"/consolidate/{period_id}")
+            if result is not None:
+                st.success(f"Done — {result['eliminations_created']} elimination(s) created.")
+                for w in result.get("warnings", []):
+                    st.warning(w)
+                st.cache_data.clear()
+
+    with col_lock:
+        if st.button(
+            "🔒 Lock Period",
+            disabled=is_locked,
+            help="Lock this period to prevent further ingestion",
+            use_container_width=True,
+        ):
+            result = api_post_empty(f"/periods/{period_id}/lock")
+            if result is not None:
+                st.success(f"Period '{result['label']}' locked.")
+                st.cache_data.clear()
+
+    if is_locked:
+        st.caption("This period is locked — ingestion and consolidation are disabled.")
+
+st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Main: Consolidated Report
+# ---------------------------------------------------------------------------
+
+st.subheader("Consolidated Report")
+
+active = st.session_state.get("active_period")
+if not active:
+    st.info("Select a reporting period to view the consolidated report.")
+else:
+    report = load_report(active["period_id"])
+
+    if report is None:
+        st.info("No report data yet. Ingest subsidiary data and run consolidation first.")
+    else:
+        # Warnings panel
+        if report.get("warnings"):
+            with st.expander(f"⚠️ Submission Warnings ({len(report['warnings'])})", expanded=True):
+                for w in report["warnings"]:
+                    st.warning(w)
+
+        # ---- Balance Sheet ------------------------------------------------
+        st.markdown("#### Balance Sheet")
+        bs = report.get("balance_sheet", {})
+
+        for section_label, section_key in [
+            ("Assets", "assets"),
+            ("Liabilities", "liabilities"),
+            ("Equity", "equity"),
+        ]:
+            items = bs.get(section_key, {})
+            if not items:
+                continue
+            st.markdown(f"**{section_label}**")
+            rows = [{"Account Code": k, "Amount": float(v)} for k, v in items.items()]
+            df = pd.DataFrame(rows)
+
+            def _highlight_nci(row: pd.Series) -> list:
+                return (
+                    ["background-color: #fff3cd"] * len(row)
+                    if row["Account Code"] == "NCI_EQUITY"
+                    else [""] * len(row)
+                )
+
+            st.dataframe(
+                df.style.apply(_highlight_nci, axis=1).format({"Amount": "{:,.2f}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.divider()
+
+        # ---- Income Statement --------------------------------------------
+        st.markdown("#### Income Statement")
+        is_data = report.get("income_statement", {})
+
+        for section_label, section_key in [
+            ("Revenue", "revenue"),
+            ("Cost of Goods Sold", "cogs"),
+            ("Operating Expenses", "operating_expenses"),
+        ]:
+            items = is_data.get(section_key, {})
+            if not items:
+                continue
+            st.markdown(f"**{section_label}**")
+            rows = [{"Account Code": k, "Amount": float(v)} for k, v in items.items()]
+            df = pd.DataFrame(rows)
+            st.dataframe(
+                df.style.format({"Amount": "{:,.2f}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.divider()
+
+        # ---- Eliminations Detail (collapsible) ---------------------------
+        elims = report.get("eliminations_summary", [])
+        with st.expander(f"Eliminations Detail ({len(elims)} entries)", expanded=False):
+            if elims:
+                elim_rows = [
+                    {
+                        "Type": e["elimination_type"],
+                        "Entity": e["entity_id"][:8] + "…",
+                        "Account Code": e["account_code"],
+                        "Amount": float(e["amount"]),
+                    }
+                    for e in elims
+                ]
+                elim_df = pd.DataFrame(elim_rows)
+                st.dataframe(
+                    elim_df.style.format({"Amount": "{:,.2f}"}),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No eliminations yet — run consolidation first.")
