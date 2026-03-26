@@ -107,7 +107,7 @@ ingest() {
   mapped=$(echo "$result" | jq -r '.entries_committed')
   unmapped=$(echo "$result" | jq -r '.unmapped_count')
   echo "  $entity: ${mapped} entries committed, ${unmapped} unmapped"
-  [ "$unmapped" -gt 0 ] && echo "    Unmapped codes: $(echo "$result" | jq -r '.unmapped_codes[]')"
+  if [ "$unmapped" -gt 0 ]; then echo "    Unmapped codes: $(echo "$result" | jq -r '.unmapped_codes[]')"; fi
 }
 
 ingest "ParentCo" "$SCRIPT_DIR/parent.csv"
@@ -126,7 +126,7 @@ ELIM_COUNT=$(echo "$CONSOL" | jq -r '.eliminations_created')
 echo "  Eliminations created: $ELIM_COUNT"
 
 WARNINGS=$(echo "$CONSOL" | jq -r '.warnings[]' 2>/dev/null || true)
-[ -n "$WARNINGS" ] && echo "  Warnings: $WARNINGS"
+if [ -n "$WARNINGS" ]; then echo "  Warnings: $WARNINGS"; fi
 
 # ---------------------------------------------------------------------------
 # 6. Verify acceptance criteria

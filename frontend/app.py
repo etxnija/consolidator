@@ -197,9 +197,10 @@ else:
     st.sidebar.info("Create entities first.")
     ingest_entity_name = None
 
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+period_is_locked = (st.session_state.get("active_period") or {}).get("status") == "locked"
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"], disabled=period_is_locked)
 
-if st.sidebar.button("Upload") and uploaded_file and ingest_entity_name:
+if st.sidebar.button("Upload", disabled=period_is_locked) and uploaded_file and ingest_entity_name:
     active_period = st.session_state.get("active_period")
     params = {}
     if active_period:

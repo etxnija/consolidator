@@ -159,8 +159,13 @@ def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> Co
     entities = db.query(EntityMetadata).all()
     warnings = _submission_warnings(db, period_id, entities)
 
-    # Build engine request payload
-    as_of_dt = datetime.combine(period.period_end, datetime.min.time()).replace(tzinfo=timezone.utc)
+    # Build engine request payload.
+    # Use now() as the as_of cutoff so that all currently-ingested entries for
+    # this period are eligible.  The period_end date is the accounting boundary
+    # for which transactions belong to the period (enforced via period_id FK);
+    # the as_of timestamp controls which ledger entries the engine can see and
+    # should always be "now" for a live consolidation run.
+    as_of_dt = datetime.now(timezone.utc)
 
     engine_entries = [
         {

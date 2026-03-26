@@ -20,16 +20,28 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Query, UploadFile, status
 
 from ..consolidation.router import router as consolidation_router
+from ..database import Base, engine
 from ..entities.router import router as entities_router
+from ..models import EntityMetadata, LedgerEntry, ReportingPeriod  # noqa: F401 — register ORM models
 from ..periods.router import router as periods_router
 from .database import commit_entries
 from .mapping import map_trial_balance, parse_csv, split_records
 from .models import UploadSummary
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Consolidator Ingestion Service",
     description="Accepts subsidiary Trial Balance CSVs and maps them to GCoA.",
     version="0.2.0",
@@ -102,7 +114,7 @@ async def ingest_trial_balance(
         ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_423_LOCKED,
             detail=str(exc),
         ) from exc
 
