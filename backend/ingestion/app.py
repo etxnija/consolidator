@@ -16,12 +16,12 @@ Optional query parameter:
 
 from __future__ import annotations
 
+import os
 import pathlib
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
-
-from contextlib import asynccontextmanager
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
@@ -45,11 +45,16 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_prod = os.getenv("APP_ENV") == "production" or os.getenv("DISABLE_DOCS", "").lower() == "true"
+
 app = FastAPI(
     lifespan=lifespan,
     title="Consolidator Ingestion Service",
     description="Accepts subsidiary Trial Balance CSVs and maps them to GCoA.",
     version="0.2.0",
+    docs_url=None if _prod else "/docs",
+    redoc_url=None if _prod else "/redoc",
+    openapi_url=None if _prod else "/openapi.json",
 )
 
 app.include_router(entities_router)

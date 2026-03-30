@@ -1,5 +1,6 @@
 """Engine service — exposes the IFRS 10 calculator via HTTP."""
 
+import os
 from datetime import datetime, timezone
 from typing import List
 
@@ -9,10 +10,15 @@ from pydantic import BaseModel
 from .calculator import IfrsCalculator
 from .models import EliminationEntry, EntityNode, LedgerEntrySnapshot
 
+_prod = os.getenv("APP_ENV") == "production" or os.getenv("DISABLE_DOCS", "").lower() == "true"
+
 app = FastAPI(
     title="Consolidator Engine",
     description="IFRS 10 stateless consolidation calculator.",
     version="0.1.0",
+    docs_url=None if _prod else "/docs",
+    redoc_url=None if _prod else "/redoc",
+    openapi_url=None if _prod else "/openapi.json",
 )
 
 

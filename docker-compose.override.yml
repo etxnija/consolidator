@@ -1,0 +1,13 @@
+# Local development overrides — NOT for production use.
+#
+# Docker Compose automatically merges this file with docker-compose.yml when
+# you run `docker compose up` (or `podman compose up`) locally.
+#
+# Restores the engine host-port binding so you can reach it directly during
+# development (e.g. `curl http://localhost:8001/docs`).  The base compose file
+# intentionally omits the host binding for production safety.
+
+services:
+  engine:
+    ports:
+      - "${ENGINE_PORT:-8001}:8001"
