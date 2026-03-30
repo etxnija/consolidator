@@ -16,6 +16,7 @@ Optional query parameter:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import pathlib
 import uuid
@@ -26,8 +27,11 @@ from typing import Optional
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 from fastapi import FastAPI, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from ..consolidation.router import router as consolidation_router
+from ..database import SessionLocal
 from ..entities.router import router as entities_router
 from ..models import EntityMetadata, LedgerEntry, ReportingPeriod  # noqa: F401 — register ORM models
 from ..periods.router import router as periods_router
@@ -62,9 +66,30 @@ app.include_router(periods_router)
 app.include_router(consolidation_router)
 
 
-@app.get("/health", status_code=status.HTTP_200_OK)
-async def health() -> dict:
-    return {"status": "ok"}
+@app.get("/health")
+async def health():
+    """Liveness + DB connectivity probe.
+
+    Returns 200 when PostgreSQL is reachable, 503 when it is not.
+    Times out after 2 seconds so the check never hangs indefinitely.
+    """
+
+    def _db_ping() -> None:
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+        finally:
+            db.close()
+
+    try:
+        loop = asyncio.get_event_loop()
+        await asyncio.wait_for(loop.run_in_executor(None, _db_ping), timeout=2.0)
+        return {"status": "ok", "db": "up"}
+    except Exception as exc:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "degraded", "db": "down", "detail": str(exc)},
+        )
 
 
 @app.post(
