@@ -16,16 +16,18 @@ Optional query parameter:
 
 from __future__ import annotations
 
+import pathlib
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from contextlib import asynccontextmanager
 
+from alembic import command as alembic_command
+from alembic.config import Config as AlembicConfig
 from fastapi import FastAPI, HTTPException, Query, UploadFile, status
 
 from ..consolidation.router import router as consolidation_router
-from ..database import Base, engine
 from ..entities.router import router as entities_router
 from ..models import EntityMetadata, LedgerEntry, ReportingPeriod  # noqa: F401 — register ORM models
 from ..periods.router import router as periods_router
@@ -33,10 +35,13 @@ from .database import commit_entries
 from .mapping import map_trial_balance, parse_csv, split_records
 from .models import UploadSummary
 
+_ALEMBIC_INI = pathlib.Path(__file__).parent.parent / "alembic.ini"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    cfg = AlembicConfig(str(_ALEMBIC_INI))
+    alembic_command.upgrade(cfg, "head")
     yield
 
 

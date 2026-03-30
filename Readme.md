@@ -175,6 +175,42 @@ consolidator/
 
 ---
 
+## Schema Migrations (Alembic)
+
+Database schema is managed via [Alembic](https://alembic.sqlalchemy.org/).
+The backend applies `alembic upgrade head` automatically on startup, so a fresh
+`podman compose up` creates all tables without any manual steps.
+
+### Adding a schema change
+
+1. Edit the SQLAlchemy models in `backend/models.py`.
+2. Generate a migration:
+   ```bash
+   cd backend
+   DATABASE_URL=postgresql+psycopg2://consolidator:consolidator@localhost:5432/consolidator \
+     alembic revision --autogenerate -m "describe your change"
+   ```
+3. Review the generated file in `backend/alembic/versions/` and adjust if needed.
+4. Apply it locally:
+   ```bash
+   alembic upgrade head
+   ```
+
+### Migration history and rollback
+
+```bash
+# Show migration history
+alembic history
+
+# Downgrade one step
+alembic downgrade -1
+
+# Re-apply
+alembic upgrade head
+```
+
+---
+
 ## Further Reading
 
 - [Consolidation Logic](docs/consolidation-logic.md) — detailed explanation of
