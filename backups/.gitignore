@@ -1,0 +1,2 @@
+# Ignore all dump files — backups are not committed to git.
+*.dump
