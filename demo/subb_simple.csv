@@ -1,0 +1,11 @@
+account_code,amount,description
+CASH,100000.00,Cash
+AR,60000.00,Trade receivables
+INV,40000.00,Inventories
+PPE,200000.00,Property plant & equipment
+AP,-30000.00,Trade payables
+LTD,-100000.00,Long-term debt
+EQUITY_SHARE_CAP,-200000.00,Share capital
+RETAINED,-170000.00,Retained earnings
+REV,-150000.00,External revenue
+COGS,50000.00,External COGS

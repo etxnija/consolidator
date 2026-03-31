@@ -26,14 +26,16 @@ from typing import Optional
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
-from fastapi import FastAPI, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from ..auth.router import get_current_user
+from ..auth.router import router as auth_router
 from ..consolidation.router import router as consolidation_router
 from ..database import SessionLocal
 from ..entities.router import router as entities_router
-from ..models import EntityMetadata, LedgerEntry, ReportingPeriod  # noqa: F401 — register ORM models
+from ..models import EntityMetadata, LedgerEntry, ReportingPeriod, User  # noqa: F401 — register ORM models
 from ..periods.router import router as periods_router
 from .database import commit_entries
 from .mapping import map_trial_balance, parse_csv, split_records
@@ -61,9 +63,10 @@ app = FastAPI(
     openapi_url=None if _prod else "/openapi.json",
 )
 
-app.include_router(entities_router)
-app.include_router(periods_router)
-app.include_router(consolidation_router)
+app.include_router(auth_router)
+app.include_router(entities_router, dependencies=[Depends(get_current_user)])
+app.include_router(periods_router, dependencies=[Depends(get_current_user)])
+app.include_router(consolidation_router, dependencies=[Depends(get_current_user)])
 
 
 @app.get("/health")
@@ -105,6 +108,7 @@ async def ingest_trial_balance(
         None,
         description="Tag these entries to a specific reporting period",
     ),
+    _current_user=Depends(get_current_user),
 ) -> UploadSummary:
     """Accept a CSV Trial Balance for *entity_id* and commit mapped entries.
 

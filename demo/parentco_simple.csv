@@ -1,0 +1,7 @@
+account_code,amount,description
+CASH,500000.00,Cash
+PPE,800000.00,Property plant & equipment
+AP,-200000.00,Trade payables
+LTD,-500000.00,Long-term debt
+EQUITY_SHARE_CAP,-1000000.00,Share capital
+RETAINED,-600000.00,Retained earnings
