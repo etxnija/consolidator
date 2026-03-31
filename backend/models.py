@@ -58,11 +58,16 @@ class ReportingPeriod(Base):
         default=uuid.uuid4,
         comment="Stable identifier for the reporting period",
     )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+        comment="Tenant that owns this reporting period",
+    )
     label: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        unique=True,
-        comment="Human-readable label, e.g. 'FY-2024', 'Q4-2024'",
+        comment="Human-readable label, e.g. 'FY-2024', 'Q4-2024' (unique per tenant)",
     )
     period_start: Mapped[datetime.date] = mapped_column(
         Date,
@@ -113,10 +118,16 @@ class EntityMetadata(Base):
         default=uuid.uuid4,
         comment="Stable identifier for the legal entity",
     )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+        comment="Tenant that owns this entity",
+    )
     name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
-        comment="Human-readable entity name",
+        comment="Human-readable entity name (unique per tenant)",
     )
     parent_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -176,6 +187,12 @@ class LedgerEntry(Base):
         primary_key=True,
         default=uuid.uuid4,
         comment="Globally unique entry identifier",
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+        comment="Tenant that owns this ledger entry",
     )
     timestamp: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),

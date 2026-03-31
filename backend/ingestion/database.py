@@ -9,8 +9,8 @@ issued — the ledger is append-only.
 
 Entity resolution:
   The ingestion API accepts a human-readable subsidiary code (e.g. "SUBS_01").
-  entity_metadata rows must already exist with matching `name` values.
-  If no matching entity is found, a LookupError is raised.
+  entity_metadata rows must already exist with matching `name` values for the
+  requesting tenant.  If no matching entity is found, a LookupError is raised.
 """
 
 from __future__ import annotations
@@ -28,30 +28,34 @@ if TYPE_CHECKING:
     from .models import LedgerEntry as PydanticLedgerEntry
 
 
-def _resolve_entity_uuid(session: Session, entity_name: str):
-    """Return the UUID for an entity by its name, or raise LookupError."""
+def _resolve_entity_uuid(session: Session, entity_name: str, tenant_id: uuid.UUID) -> uuid.UUID:
+    """Return the UUID for an entity by its name within the given tenant, or raise LookupError."""
     rows = (
         session.query(EntityMetadata)
-        .filter(EntityMetadata.name == entity_name)
+        .filter(EntityMetadata.name == entity_name, EntityMetadata.tenant_id == tenant_id)
         .all()
     )
     if not rows:
         raise LookupError(
-            f"Entity {entity_name!r} not found in entity_metadata. "
+            f"Entity {entity_name!r} not found in entity_metadata for this tenant. "
             "Ensure the entity has been registered before ingestion."
         )
     if len(rows) > 1:
         raise LookupError(
-            f"Multiple entities named {entity_name!r} exist "
+            f"Multiple entities named {entity_name!r} exist for this tenant "
             f"({len(rows)} rows). Delete duplicates via DELETE /entities/{{id}} "
             "or use the entity UUID directly."
         )
     return rows[0].entity_id
 
 
-def _resolve_period(session: Session, period_id: uuid.UUID) -> ReportingPeriod:
-    """Return the period row, or raise LookupError / ValueError."""
-    period = session.get(ReportingPeriod, period_id)
+def _resolve_period(session: Session, period_id: uuid.UUID, tenant_id: uuid.UUID) -> ReportingPeriod:
+    """Return the period row for the given tenant, or raise LookupError / ValueError."""
+    period = (
+        session.query(ReportingPeriod)
+        .filter(ReportingPeriod.period_id == period_id, ReportingPeriod.tenant_id == tenant_id)
+        .one_or_none()
+    )
     if period is None:
         raise LookupError(f"Reporting period {period_id} not found.")
     if period.status == PeriodStatus.locked:
@@ -62,6 +66,7 @@ def _resolve_period(session: Session, period_id: uuid.UUID) -> ReportingPeriod:
 def commit_entries(
     entries: "List[PydanticLedgerEntry]",
     entity_name: str,
+    tenant_id: uuid.UUID,
     period_id: Optional[uuid.UUID] = None,
 ) -> int:
     """Insert Pydantic LedgerEntry records into ledger_entries via ORM.
@@ -70,13 +75,15 @@ def commit_entries(
         entries: Validated Pydantic LedgerEntry objects from mapping.py.
         entity_name: Human-readable subsidiary name (e.g. "SUBS_01") used
             to resolve the entity UUID from entity_metadata.
+        tenant_id: Tenant UUID from the JWT — all rows are tagged with this.
         period_id: Optional UUID of a reporting period to tag entries to.
 
     Returns:
         Number of rows inserted.
 
     Raises:
-        LookupError: If no entity_metadata row exists for entity_name, or period not found.
+        LookupError: If no entity_metadata row exists for entity_name within the
+            tenant, or period not found for the tenant.
         ValueError: If the period is locked.
     """
     if not entries:
@@ -85,15 +92,16 @@ def commit_entries(
     # get_db() is a generator — consume it manually here.
     session: Session = next(get_db())
     try:
-        entity_uuid = _resolve_entity_uuid(session, entity_name)
+        entity_uuid = _resolve_entity_uuid(session, entity_name, tenant_id)
 
         if period_id is not None:
-            _resolve_period(session, period_id)
+            _resolve_period(session, period_id, tenant_id)
 
         orm_rows = [
             OrmLedgerEntry(
                 entry_id=entry.entry_id,
                 timestamp=entry.timestamp,
+                tenant_id=tenant_id,
                 entity_id=entity_uuid,
                 account_code=entry.account_code,
                 amount=entry.amount,

@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..auth.router import get_current_tenant_id
 from ..database import get_db
 from ..models import EntityMetadata, LedgerEntry, ReportingPeriod
 
@@ -90,8 +91,12 @@ class ConsolidatedReport(BaseModel):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load_period(db: Session, period_id: uuid.UUID) -> ReportingPeriod:
-    period = db.get(ReportingPeriod, period_id)
+def _load_period(db: Session, period_id: uuid.UUID, tenant_id: uuid.UUID) -> ReportingPeriod:
+    period = (
+        db.query(ReportingPeriod)
+        .filter(ReportingPeriod.period_id == period_id, ReportingPeriod.tenant_id == tenant_id)
+        .one_or_none()
+    )
     if period is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Period not found")
     return period
@@ -100,6 +105,7 @@ def _load_period(db: Session, period_id: uuid.UUID) -> ReportingPeriod:
 def _submission_warnings(
     db: Session,
     period_id: uuid.UUID,
+    tenant_id: uuid.UUID,
     entities: List[EntityMetadata],
 ) -> List[str]:
     """Return warnings for entities with no ledger entries in the period."""
@@ -108,6 +114,7 @@ def _submission_warnings(
         count = (
             db.query(LedgerEntry)
             .filter(
+                LedgerEntry.tenant_id == tenant_id,
                 LedgerEntry.entity_id == entity.entity_id,
                 LedgerEntry.period_id == period_id,
                 LedgerEntry.is_elimination == False,  # noqa: E712
@@ -128,7 +135,11 @@ def _submission_warnings(
     response_model=ConsolidationResult,
     status_code=status.HTTP_200_OK,
 )
-def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> ConsolidationResult:
+def run_consolidation(
+    period_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> ConsolidationResult:
     """Run IFRS 10 consolidation for a period.
 
     Steps:
@@ -138,12 +149,13 @@ def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> Co
     4. Persist returned elimination entries to ledger_entries.
     5. Return summary with any submission warnings.
     """
-    period = _load_period(db, period_id)
+    period = _load_period(db, period_id, tenant_id)
 
     # Load entries for this period (non-elimination only — eliminations are idempotently re-created)
     entries = (
         db.query(LedgerEntry)
         .filter(
+            LedgerEntry.tenant_id == tenant_id,
             LedgerEntry.period_id == period_id,
             LedgerEntry.is_elimination == False,  # noqa: E712
         )
@@ -156,15 +168,10 @@ def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> Co
             detail="No ledger entries found for this period. Ingest subsidiary data first.",
         )
 
-    entities = db.query(EntityMetadata).all()
-    warnings = _submission_warnings(db, period_id, entities)
+    entities = db.query(EntityMetadata).filter(EntityMetadata.tenant_id == tenant_id).all()
+    warnings = _submission_warnings(db, period_id, tenant_id, entities)
 
     # Build engine request payload.
-    # Use now() as the as_of cutoff so that all currently-ingested entries for
-    # this period are eligible.  The period_end date is the accounting boundary
-    # for which transactions belong to the period (enforced via period_id FK);
-    # the as_of timestamp controls which ledger entries the engine can see and
-    # should always be "now" for a live consolidation run.
     as_of_dt = datetime.now(timezone.utc)
 
     engine_entries = [
@@ -210,7 +217,7 @@ def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> Co
     engine_result = resp.json()
     eliminations = engine_result.get("eliminations", [])
 
-    # Persist elimination entries
+    # Persist elimination entries — tagged with the requesting tenant
     now = datetime.now(timezone.utc)
     orm_rows = []
     for elim in eliminations:
@@ -218,6 +225,7 @@ def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> Co
             LedgerEntry(
                 entry_id=uuid.UUID(elim["entry_id"]),
                 timestamp=now,
+                tenant_id=tenant_id,
                 entity_id=uuid.UUID(elim["entity_id"]),
                 account_code=elim["account_code"],
                 amount=Decimal(str(elim["amount"])),
@@ -243,19 +251,23 @@ def run_consolidation(period_id: uuid.UUID, db: Session = Depends(get_db)) -> Co
     response_model=ConsolidatedReport,
     status_code=status.HTTP_200_OK,
 )
-def get_report(period_id: uuid.UUID, db: Session = Depends(get_db)) -> ConsolidatedReport:
+def get_report(
+    period_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> ConsolidatedReport:
     """Return the consolidated financial statements for a period.
 
     Loads all ledger entries (including eliminations), sums by account code,
     and classifies into balance sheet / income statement sections.
     """
-    period = _load_period(db, period_id)
-    entities = db.query(EntityMetadata).all()
-    warnings = _submission_warnings(db, period_id, entities)
+    period = _load_period(db, period_id, tenant_id)
+    entities = db.query(EntityMetadata).filter(EntityMetadata.tenant_id == tenant_id).all()
+    warnings = _submission_warnings(db, period_id, tenant_id, entities)
 
     all_entries = (
         db.query(LedgerEntry)
-        .filter(LedgerEntry.period_id == period_id)
+        .filter(LedgerEntry.tenant_id == tenant_id, LedgerEntry.period_id == period_id)
         .all()
     )
 
