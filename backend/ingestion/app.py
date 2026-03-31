@@ -32,6 +32,9 @@ from sqlalchemy import text
 
 from ..auth.router import get_current_user
 from ..auth.router import router as auth_router
+from ..logging_config import RequestIdMiddleware, get_logger
+
+log = get_logger(__name__)
 from ..consolidation.router import router as consolidation_router
 from ..database import SessionLocal
 from ..entities.router import router as entities_router
@@ -62,6 +65,8 @@ app = FastAPI(
     redoc_url=None if _prod else "/redoc",
     openapi_url=None if _prod else "/openapi.json",
 )
+
+app.add_middleware(RequestIdMiddleware)
 
 app.include_router(auth_router)
 app.include_router(entities_router, dependencies=[Depends(get_current_user)])
