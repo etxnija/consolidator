@@ -28,11 +28,14 @@ if TYPE_CHECKING:
     from .models import LedgerEntry as PydanticLedgerEntry
 
 
-def _resolve_entity_uuid(session: Session, entity_name: str):
-    """Return the UUID for an entity by its name, or raise LookupError."""
+def _resolve_entity_uuid(session: Session, entity_name: str, tenant_id: uuid.UUID):
+    """Return the UUID for an entity by its name within the tenant, or raise LookupError."""
     rows = (
         session.query(EntityMetadata)
-        .filter(EntityMetadata.name == entity_name)
+        .filter(
+            EntityMetadata.name == entity_name,
+            EntityMetadata.tenant_id == tenant_id,
+        )
         .all()
     )
     if not rows:
@@ -49,9 +52,16 @@ def _resolve_entity_uuid(session: Session, entity_name: str):
     return rows[0].entity_id
 
 
-def _resolve_period(session: Session, period_id: uuid.UUID) -> ReportingPeriod:
-    """Return the period row, or raise LookupError / ValueError."""
-    period = session.get(ReportingPeriod, period_id)
+def _resolve_period(session: Session, period_id: uuid.UUID, tenant_id: uuid.UUID) -> ReportingPeriod:
+    """Return the period row for the given tenant, or raise LookupError / ValueError."""
+    period = (
+        session.query(ReportingPeriod)
+        .filter(
+            ReportingPeriod.period_id == period_id,
+            ReportingPeriod.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if period is None:
         raise LookupError(f"Reporting period {period_id} not found.")
     if period.status == PeriodStatus.locked:
@@ -62,6 +72,7 @@ def _resolve_period(session: Session, period_id: uuid.UUID) -> ReportingPeriod:
 def commit_entries(
     entries: "List[PydanticLedgerEntry]",
     entity_name: str,
+    tenant_id: uuid.UUID,
     period_id: Optional[uuid.UUID] = None,
 ) -> int:
     """Insert Pydantic LedgerEntry records into ledger_entries via ORM.
@@ -70,6 +81,7 @@ def commit_entries(
         entries: Validated Pydantic LedgerEntry objects from mapping.py.
         entity_name: Human-readable subsidiary name (e.g. "SUBS_01") used
             to resolve the entity UUID from entity_metadata.
+        tenant_id: UUID of the tenant performing the ingestion.
         period_id: Optional UUID of a reporting period to tag entries to.
 
     Returns:
@@ -85,10 +97,10 @@ def commit_entries(
     # get_db() is a generator — consume it manually here.
     session: Session = next(get_db())
     try:
-        entity_uuid = _resolve_entity_uuid(session, entity_name)
+        entity_uuid = _resolve_entity_uuid(session, entity_name, tenant_id)
 
         if period_id is not None:
-            _resolve_period(session, period_id)
+            _resolve_period(session, period_id, tenant_id)
 
         orm_rows = [
             OrmLedgerEntry(
@@ -99,6 +111,7 @@ def commit_entries(
                 amount=entry.amount,
                 is_elimination=entry.is_elimination,
                 period_id=period_id,
+                tenant_id=tenant_id,
                 metadata_=entry.metadata,
             )
             for entry in entries

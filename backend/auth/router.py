@@ -111,6 +111,13 @@ def get_current_user(
     return CurrentUser(user_id=user_id, username=username, tenant_id=tenant_id)
 
 
+def get_current_tenant_id(
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> uuid.UUID:
+    """Return just the tenant_id UUID from the current JWT claims."""
+    return current_user.tenant_id
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------

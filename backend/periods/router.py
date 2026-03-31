@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..auth.router import get_current_tenant_id
 from ..database import get_db
 from ..models import PeriodStatus, ReportingPeriod
 
@@ -49,7 +50,11 @@ class PeriodResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("", response_model=PeriodResponse, status_code=status.HTTP_201_CREATED)
-def create_period(body: PeriodCreate, db: Session = Depends(get_db)) -> PeriodResponse:
+def create_period(
+    body: PeriodCreate,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> PeriodResponse:
     """Create a new reporting period."""
     if body.period_end < body.period_start:
         raise HTTPException(
@@ -57,7 +62,14 @@ def create_period(body: PeriodCreate, db: Session = Depends(get_db)) -> PeriodRe
             detail="period_end must be on or after period_start",
         )
 
-    existing = db.query(ReportingPeriod).filter(ReportingPeriod.label == body.label).one_or_none()
+    existing = (
+        db.query(ReportingPeriod)
+        .filter(
+            ReportingPeriod.label == body.label,
+            ReportingPeriod.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -69,6 +81,7 @@ def create_period(body: PeriodCreate, db: Session = Depends(get_db)) -> PeriodRe
         period_start=body.period_start,
         period_end=body.period_end,
         status=PeriodStatus.open,
+        tenant_id=tenant_id,
     )
     db.add(period)
     db.commit()
@@ -77,25 +90,55 @@ def create_period(body: PeriodCreate, db: Session = Depends(get_db)) -> PeriodRe
 
 
 @router.get("", response_model=List[PeriodResponse])
-def list_periods(db: Session = Depends(get_db)) -> List[PeriodResponse]:
+def list_periods(
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> List[PeriodResponse]:
     """Return all reporting periods ordered by period_end descending."""
-    rows = db.query(ReportingPeriod).order_by(ReportingPeriod.period_end.desc()).all()
+    rows = (
+        db.query(ReportingPeriod)
+        .filter(ReportingPeriod.tenant_id == tenant_id)
+        .order_by(ReportingPeriod.period_end.desc())
+        .all()
+    )
     return [PeriodResponse.model_validate(r) for r in rows]
 
 
 @router.get("/{period_id}", response_model=PeriodResponse)
-def get_period(period_id: uuid.UUID, db: Session = Depends(get_db)) -> PeriodResponse:
+def get_period(
+    period_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> PeriodResponse:
     """Return a single reporting period by UUID."""
-    period = db.get(ReportingPeriod, period_id)
+    period = (
+        db.query(ReportingPeriod)
+        .filter(
+            ReportingPeriod.period_id == period_id,
+            ReportingPeriod.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if period is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Period not found")
     return PeriodResponse.model_validate(period)
 
 
 @router.post("/{period_id}/lock", response_model=PeriodResponse)
-def lock_period(period_id: uuid.UUID, db: Session = Depends(get_db)) -> PeriodResponse:
+def lock_period(
+    period_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> PeriodResponse:
     """Lock a period to prevent further ingestion or modification."""
-    period = db.get(ReportingPeriod, period_id)
+    period = (
+        db.query(ReportingPeriod)
+        .filter(
+            ReportingPeriod.period_id == period_id,
+            ReportingPeriod.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if period is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Period not found")
     if period.status == PeriodStatus.locked:

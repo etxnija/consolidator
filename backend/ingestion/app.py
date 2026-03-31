@@ -30,7 +30,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from ..auth.router import get_current_user
+from ..auth.router import get_current_tenant_id, get_current_user
 from ..auth.router import router as auth_router
 from ..logging_config import RequestIdMiddleware, get_logger
 
@@ -113,7 +113,7 @@ async def ingest_trial_balance(
         None,
         description="Tag these entries to a specific reporting period",
     ),
-    _current_user=Depends(get_current_user),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
 ) -> UploadSummary:
     """Accept a CSV Trial Balance for *entity_id* and commit mapped entries.
 
@@ -150,7 +150,7 @@ async def ingest_trial_balance(
     entries, unmapped_codes = split_records(records)
 
     try:
-        committed = commit_entries(entries, entity_name=entity_id, period_id=period_id)
+        committed = commit_entries(entries, entity_name=entity_id, tenant_id=tenant_id, period_id=period_id)
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

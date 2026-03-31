@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..auth.router import get_current_tenant_id
 from ..database import get_db
 from ..models import EntityMetadata
 
@@ -54,10 +55,21 @@ class EntityResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("", response_model=EntityResponse, status_code=status.HTTP_201_CREATED)
-def create_entity(body: EntityCreate, db: Session = Depends(get_db)) -> EntityResponse:
+def create_entity(
+    body: EntityCreate,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> EntityResponse:
     """Register a new entity in the consolidation hierarchy."""
     if body.parent_entity_id is not None:
-        parent = db.get(EntityMetadata, body.parent_entity_id)
+        parent = (
+            db.query(EntityMetadata)
+            .filter(
+                EntityMetadata.entity_id == body.parent_entity_id,
+                EntityMetadata.tenant_id == tenant_id,
+            )
+            .one_or_none()
+        )
         if parent is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -68,6 +80,7 @@ def create_entity(body: EntityCreate, db: Session = Depends(get_db)) -> EntityRe
         name=body.name,
         parent_entity_id=body.parent_entity_id,
         ownership_pct=body.ownership_pct,
+        tenant_id=tenant_id,
     )
     db.add(entity)
     db.commit()
@@ -76,20 +89,26 @@ def create_entity(body: EntityCreate, db: Session = Depends(get_db)) -> EntityRe
 
 
 @router.get("", response_model=List[EntityResponse])
-def list_entities(db: Session = Depends(get_db)) -> List[EntityResponse]:
-    """Return all registered entities."""
-    rows = db.query(EntityMetadata).all()
+def list_entities(
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> List[EntityResponse]:
+    """Return all registered entities for the current tenant."""
+    rows = db.query(EntityMetadata).filter(EntityMetadata.tenant_id == tenant_id).all()
     return [EntityResponse.model_validate(r) for r in rows]
 
 
 @router.get("/tree", response_model=List[Dict[str, Any]])
-def entity_tree(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
+def entity_tree(
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> List[Dict[str, Any]]:
     """Return the full ownership hierarchy as a nested tree.
 
     Each node has: entity_id, name, ownership_pct, children[].
     Top-level nodes (parent_entity_id is NULL) are roots.
     """
-    rows = db.query(EntityMetadata).all()
+    rows = db.query(EntityMetadata).filter(EntityMetadata.tenant_id == tenant_id).all()
     by_id: Dict[uuid.UUID, Dict[str, Any]] = {
         r.entity_id: {
             "entity_id": str(r.entity_id),
@@ -112,9 +131,20 @@ def entity_tree(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
 
 
 @router.get("/{entity_id}", response_model=EntityResponse)
-def get_entity(entity_id: uuid.UUID, db: Session = Depends(get_db)) -> EntityResponse:
+def get_entity(
+    entity_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> EntityResponse:
     """Return a single entity by UUID."""
-    entity = db.get(EntityMetadata, entity_id)
+    entity = (
+        db.query(EntityMetadata)
+        .filter(
+            EntityMetadata.entity_id == entity_id,
+            EntityMetadata.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if entity is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
     return EntityResponse.model_validate(entity)
@@ -125,14 +155,29 @@ def update_entity(
     entity_id: uuid.UUID,
     body: EntityUpdate,
     db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
 ) -> EntityResponse:
     """Update an entity's parent or ownership percentage."""
-    entity = db.get(EntityMetadata, entity_id)
+    entity = (
+        db.query(EntityMetadata)
+        .filter(
+            EntityMetadata.entity_id == entity_id,
+            EntityMetadata.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if entity is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
 
     if body.parent_entity_id is not None:
-        parent = db.get(EntityMetadata, body.parent_entity_id)
+        parent = (
+            db.query(EntityMetadata)
+            .filter(
+                EntityMetadata.entity_id == body.parent_entity_id,
+                EntityMetadata.tenant_id == tenant_id,
+            )
+            .one_or_none()
+        )
         if parent is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -149,9 +194,20 @@ def update_entity(
 
 
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_entity(entity_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+def delete_entity(
+    entity_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+) -> None:
     """Delete an entity. Blocked if the entity has ledger entries."""
-    entity = db.get(EntityMetadata, entity_id)
+    entity = (
+        db.query(EntityMetadata)
+        .filter(
+            EntityMetadata.entity_id == entity_id,
+            EntityMetadata.tenant_id == tenant_id,
+        )
+        .one_or_none()
+    )
     if entity is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
     if entity.ledger_entries:
