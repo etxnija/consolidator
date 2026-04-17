@@ -81,7 +81,7 @@ class ReportingPeriod(Base):
         comment="Last day of the reporting period (used as as_of cutoff)",
     )
     status: Mapped[PeriodStatus] = mapped_column(
-        Enum(PeriodStatus, name="period_status"),
+        Enum(PeriodStatus, name="period_status", create_type=False),
         nullable=False,
         default=PeriodStatus.open,
         server_default=text("'open'"),
